@@ -1,0 +1,35 @@
+{
+  "_comment": "FlashAttention-4 forward (Blackwell) mapped onto plot_timeline.py. roles = display order (MMA centered so dep arrows stay between adjacent rows); role_id = the kernel's prof role index. evt ids follow the kernel's stamp layout documented in README.md.",
+  "roles": ["Load", "Softmax0", "MMA", "Softmax1", "Correction"],
+  "role_id": {"Load": 0, "Softmax0": 2, "MMA": 1, "Softmax1": 3, "Correction": 4},
+  "active": [
+    {"role": "Softmax0", "beg": 1, "end": 2, "color": "#1b7837", "label": "exp"},
+    {"role": "Softmax1", "beg": 1, "end": 2, "color": "#7fbf7b", "label": "exp"},
+    {"role": "MMA",      "beg": 10, "end": 0, "color": "#3b6fb6", "label": "active (PV+QK, s0)"},
+    {"role": "MMA",      "beg": 11, "end": 1, "color": "#5b8fd6", "label": "active (PV+QK, s1)"},
+    {"role": "Correction", "beg": 1, "end": 2, "color": "#762a83", "label": "rescale O (s0)"},
+    {"role": "Correction", "beg": 4, "end": 5, "color": "#762a83", "label": "rescale O (s1)"}
+  ],
+  "stall": [
+    {"role": "Softmax0", "beg": 0, "end": 1},
+    {"role": "Softmax1", "beg": 0, "end": 1},
+    {"role": "MMA", "beg": 8,  "end": 10},
+    {"role": "MMA", "beg": 9,  "end": 11},
+    {"role": "MMA", "beg": 12, "end": 13},
+    {"role": "MMA", "beg": 14, "end": 15},
+    {"role": "Correction", "beg": 0, "end": 1},
+    {"role": "Correction", "beg": 3, "end": 4}
+  ],
+  "markers": [
+    {"role": "Load", "evt": 0, "color": "#d62728", "marker": "^"},
+    {"role": "Load", "evt": 1, "color": "#1f77b4", "marker": "v"}
+  ],
+  "deps": [
+    {"prod": "MMA", "pevt": 0, "cons": "Softmax0", "cevt": 1, "color": "#3b6fb6", "label": "S(QKᵀ) -> softmax"},
+    {"prod": "MMA", "pevt": 1, "cons": "Softmax1", "cevt": 1, "color": "#3b6fb6", "label": "S(QKᵀ) -> softmax"},
+    {"prod": "Softmax0", "pevt": 2, "cons": "MMA", "cevt": 10, "color": "#1b7837", "label": "P -> MMA (P@V)"},
+    {"prod": "Softmax1", "pevt": 2, "cons": "MMA", "cevt": 11, "color": "#7fbf7b", "label": "P -> MMA (P@V)"},
+    {"prod": "Softmax1", "pevt": 3, "cons": "Correction", "cevt": 4, "color": "#b35806", "label": "row_max -> correction"}
+  ],
+  "overlap": [["MMA", 10, 0], ["Softmax0", 1, 2]]
+}
