@@ -5,7 +5,7 @@ per-SM `clock()` at its synchronization points, then reconstruct a per-warp
 **pipeline timeline**. It makes three things visible that ordinary profilers do
 not: **stalls**, **cross-warp data dependencies**, and **compute/memory overlap**.
 
-See [`SKILL.md`](SKILL.md) for the method (5 steps + instrumentation patterns).
+See [`SKILL.md`](SKILL.md) for the method — **predict → measure → reconcile** (a 5-step measurement core + instrumentation patterns).
 [`helpers/plot_timeline.py`](helpers/plot_timeline.py) is a kernel-agnostic plotter
 driven by a small JSON spec. This README is a complete worked example.
 
@@ -18,6 +18,27 @@ streams K/V; one **MMA** warp issues both GEMMs (QKᵀ and P@V) on the tensor co
 two **softmax** warpgroups process two Q tiles (the ping-pong); a **correction**
 warp rescales the output accumulator for online softmax. They coordinate through
 `mbarrier`/pipeline objects.
+
+### Predict first (feeds & speeds)
+
+Before measuring, budget one KV iteration by **resource** (FA-4 §3.1.1). For the tile here (M=256 from the two-Q-tile ping-pong, N=d=128):
+
+| resource | cyc/iter formula | BF16 |
+|---|---|---|
+| tensor core (MMA) | `4·M·N·d / 8192` (two GEMMs, 8192 FLOP/cyc) | 2048 |
+| shared memory | `3·M·N·d / 8192` (128 B/cyc) | 1536 |
+| exp unit (MUFU) | `M·N / 16` (16 ops/cyc) | 2048 |
+
+→ **MMA and exp are co-bottlenecks; smem has slack.** Crucially `T_exp` has **no precision term** — exp always runs on FP32 scores — while `T_MMA` shrinks with low precision. So any low-bit speedup of the GEMMs pushes the kernel **softmax-bound** and idles the tensor core. Split `T_MMA = T_QK + T_PV` (1024+1024 in BF16) and scale each by precision (FP8 ≈2×, FP4 ≈4× on the tensor core; `T_exp` fixed at 2048):
+
+| config (QK/PV) | T_QK | T_PV | **T_MMA** | T_exp | **predicted MMA idle** = 1−T_MMA/T_exp |
+|---|---|---|---|---|---|
+| BF16 (16/16) | 1024 | 1024 | 2048 | 2048 | ~0% (balanced) |
+| FP8 (8/8) | 512 | 512 | 1024 | 2048 | 50% |
+| NVFP4 (4/8) | 256 | 512 | 768 | 2048 | 62% |
+| NVFP4 (4/16) | 256 | 1024 | 1280 | 2048 | 38% |
+
+Falsifiable hypothesis: *MMA should stall increasingly as precision drops; the softmax rows should stay packed regardless.* Now measure and check.
 
 ### Warp roles and the stamps placed at each sync boundary
 
@@ -51,6 +72,23 @@ Reading it (top = full tile over 16 KV blocks; bottom = steady-state zoom):
   orange `row_max → correction`. The orange arrow leaves the **middle** of a
   softmax bar: softmax publishes the row-max *before* finishing the exp, so
   correction can start early — a deliberate pipelining win.
+
+### Reconcile: predicted vs. measured
+
+Running the *same* instrumentation across all four configs and reading MMA stall off the timeline:
+
+| config | predicted MMA idle | **measured MMA stall** |
+|---|---|---|
+| BF16 | ~0% | 40% |
+| FP8 | 50% | 66% |
+| NVFP4 (4/8) | 62% | **61%** ✓ |
+| NVFP4 (4/16) | 38% | 55% |
+
+**Direction and ranking match exactly** — smaller `T_MMA` → more MMA idle — and the most GEMM-starved config (QK4/PV8) lands on its prediction (62% vs 61%). Measured is uniformly *above* the bare roofline because of the residual sources in [`SKILL.md` → Reconcile](SKILL.md#reconcile-predicted-vs-measured): the roofline counts softmax as *only* the MUFU exp term, but the softmax warp also does the TMEM read of S, the row-max/sum reduction, scale-subtract, P convert/requant, and the TMEM write of P — real work that shows as the colored tail **plus the light untracked region** on the softmax rows. That uncounted softmax cost is why even "balanced" BF16 stalls the MMA 40%, not 0%.
+
+The picture **confirms** the prediction's logic: low precision makes attention softmax-bound and leaves the tensor core 1/2–2/3 idle — so NVFP4's value is shrinking absolute latency by making *both* GEMMs low-precision, not "quantizing P" (the requant is nearly free). Had the numbers *not* lined up, the next move is the dual diagnosis in [`SKILL.md`](SKILL.md#reconcile-predicted-vs-measured): either the analysis missed a resource/serialization, or the kernel itself is leaving overlap on the table.
+
+> These four-config numbers come from the FA-4 low-bit study; this repo ships only the BF16 example trace, whose **lighter** instrumentation reads MMA stall ≈25% (vs 40% with the heavier stamps used for the cross-precision table). Same kernel, different stamp count — a concrete reminder to trust **ratios across configs**, not absolute stall.
 
 ### Reproduce the chart from the trace
 
