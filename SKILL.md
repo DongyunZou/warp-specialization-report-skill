@@ -61,9 +61,19 @@ Launch once on the single-CTA workload, copy the buffer to host, reshape to `(N_
 ### 5. Plot the timeline
 Use [`helpers/plot_timeline.py`](helpers/plot_timeline.py) with a small JSON spec mapping `(role, evt)` slots to **active spans**, **stall spans** (begin/exit of each wait), **markers**, and **dependency arrows** (producer `(role,evt)` → consumer `(role,evt)`). It renders the Gantt + arrows and prints per-warp stall % and a compute-overlap ratio. See [`README.md`](README.md) for a complete worked example.
 
+## Reading the chart: three states per row (do not conflate them)
+
+Every row has **three** visual states, and the difference is *measured vs. not-measured* — not "more stall vs. less stall":
+
+1. **Colored bar = instrumented active work** — bracketed by a stamp pair (e.g. a span's `beg`/`end`).
+2. **Gray hatched = a *measured* stall** — the warp was provably parked on a barrier: the kernel stamped `clock()` immediately *before and after* a specific `wait`, and the bar width is that exact enter→exit delta. This is the only state that proves blocking.
+3. **Light (untracked) underlay = an *un-instrumented* interval** — no stamp pair brackets it, so the tool draws nothing definite. It is **not** a stall and must not be read as one. It is usually un-instrumented productive work (an epilogue between two stamped events, or an async copy where only the *issue instant* was stamped, not its duration), or genuine slack. Plain white = the role had no stamps there at all.
+
+> The plotter lays a faint underlay across each row's stamped span precisely so blanks become a labeled category instead of invisible whitespace. When you see a row that is mostly light, that means *we did not instrument it*, **not** that the warp was idle/blocked — go add stamps there if it matters.
+
 ## What to look for
 
-- **Stall bars** (rendered gray/hatched): a warp blocked on a barrier. A consumer that stalls a lot is bottlenecked by its producer; a producer that never stalls is the bottleneck.
+- **Stall bars** (gray/hatched — a *measured* wait): a warp blocked on a barrier. A consumer that stalls a lot is bottlenecked by its producer; a producer that never stalls is the bottleneck. (Light underlay is *not* this — see above.)
 - **Dependency arrows** (producer `arrive` → consumer `wait`-exit): the arrow lands exactly where the stall ends → that producer was the binding constraint. If a consumer's wait-exit is *well after* the producer's signal, something else was binding.
 - **Overlap**: do two role-rows have work spans at the *same x*? That concurrency is the win. Quantify it: `intersection(producerA_busy, producerB_busy) / busy_span`. Near-100% overlap between the two co-bottleneck resources means the pipeline is doing its job.
 - **Early signalling**: a dependency arrow leaving the *middle* of a work bar means the warp publishes a partial result before finishing — a deliberate pipelining trick worth calling out.

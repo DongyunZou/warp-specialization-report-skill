@@ -36,7 +36,8 @@ from matplotlib.patches import Patch, FancyArrowPatch
 from matplotlib import patheffects as pe
 
 H = 0.54
-C_STALL, C_STALL_EC = "#a6a6a6", "#5a5a5a"
+C_STALL, C_STALL_EC = "#bdbdbd", "#8a8a8a"   # measured stall (parked on a barrier) — gray, hatched
+C_UNTRACKED = "#ededed"                       # un-instrumented interval (no clock() bracket) — NOT a stall
 
 
 def ev(raw, role, e, t0):
@@ -98,6 +99,21 @@ def main():
         ax.add_patch(p)
 
     def draw(ax, tlo, thi, title, arrows):
+        # untracked underlay (z=0.5): light fill across each role's full stamped
+        # span. Active spans (z=2) and stall spans (z=4) overlay it; whatever stays
+        # light = an un-instrumented interval (no clock() bracket) — e.g. an epilogue
+        # or async copy we never wrapped. This is NOT a measured stall; do not read
+        # it as one. Plain white = the role had no stamps there at all.
+        for r in roles:
+            sub = raw[rid[r]]
+            nz = sub[sub != 0]
+            if nz.size:
+                s, e = int(nz.min()) - t0, int(nz.max()) - t0
+                if tlo is not None:
+                    s, e = max(s, tlo), min(e, thi)
+                if e > s:
+                    ax.broken_barh([(s, e - s)], (yof[r] - H / 2, H),
+                                   facecolors=C_UNTRACKED, edgecolors="none", zorder=0.5)
         for a in spec.get("active", []):
             y, beg, end = yof[a["role"]], ev(raw, rid[a["role"]], a["beg"], t0), ev(raw, rid[a["role"]], a["end"], t0)
             for it in beg:
@@ -164,14 +180,17 @@ def main():
 
     npanels = 2 if args.zoom > 0 else 1
     fig, axes = plt.subplots(npanels, 1, figsize=(15, 4.2 * npanels), squeeze=False)
-    draw(axes[0][0], None, None, "Warp-specialized pipeline timeline — full (gray-hatched = STALL)", arrows=(npanels == 1))
+    draw(axes[0][0], None, None,
+         "Warp-specialized pipeline timeline — full  (gray-hatched = measured STALL · light = untracked, not a stall)",
+         arrows=(npanels == 1))
     if npanels == 2:
         w = total * args.zoom
         tlo = max(0, total / 2 - w / 2)
         draw(axes[1][0], tlo, tlo + w, "Zoom — arrows = data dependencies (producer signal -> consumer wait-exit)", arrows=True)
 
     legend = ([Patch(fc=a["color"], label=f"{a['role']}: {a.get('label','active')}") for a in spec.get("active", [])]
-              + [Patch(fc=C_STALL, ec=C_STALL_EC, hatch="////", label="STALL")]
+              + [Patch(fc=C_STALL, ec=C_STALL_EC, hatch="////", label="STALL (measured wait)"),
+                 Patch(fc=C_UNTRACKED, ec="#cccccc", label="untracked (not a stall)")]
               + [plt.Line2D([], [], color=d["color"], lw=1.6, label="dep: " + d.get("label", f"{d['prod']}->{d['cons']}"))
                  for d in spec.get("deps", [])])
     fig.legend(handles=legend, loc="lower center", ncol=5, fontsize=8, bbox_to_anchor=(0.5, -0.02))

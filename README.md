@@ -80,7 +80,7 @@ row as a single "active" color for simplicity.)
 | file | purpose |
 |---|---|
 | [`SKILL.md`](SKILL.md) | the method: identify roles → stamp clock() at sync boundaries → single-CTA buffer → plot; instrumentation patterns for CuTe-DSL and CUDA C++ |
-| [`helpers/plot_timeline.py`](helpers/plot_timeline.py) | generic, spec-driven Gantt plotter (active/stall/markers/dependency-arrows + stall% and overlap metrics) |
+| [`helpers/plot_timeline.py`](helpers/plot_timeline.py) | generic, spec-driven Gantt plotter. Renders three per-row states — colored *active work*, gray-hatched *measured stall*, light *untracked* (uninstrumented, **not** a stall) — plus markers/dependency-arrows + stall% and overlap metrics |
 | `examples/flash_attention_timeline.png` | headline example figure |
 | `examples/flash_attention_trace.npz` | the raw clock() stamp buffer for the example |
 | `examples/flash_attention_spec.json` | spec mapping the buffer to rows/spans/arrows |
